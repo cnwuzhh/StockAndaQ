@@ -184,36 +184,254 @@ def check_boll_touch(df, lookback_days=1):
     return touched, touch_info
 
 
-def print_boll_touch_alert(stock_code, df, lookback_days=1):
+def print_boll_touch_alert(stock_code, df, analyze_touch=True):
     """
-    输出BOLL触碰提醒
+    输出BOLL触碰提醒（只检测最新交易日，包含触碰模式分析）
 
     参数:
         stock_code: 股票代码
         df: 包含BOLL指标的DataFrame
-        lookback_days: 检测最近几天，默认为1(昨天)
+        analyze_touch: 是否分析触碰模式，默认True
+
+    返回:
+        touch_info: dict, 触碰信息
+            - current_touch: bool, 最新交易日是否触碰
+            - current_touch_type: str, 触碰类型 (UPPER/LOWER/None)
+            - current_consecutive_count: int, 连续触碰次数
+            - last_touch_info: dict, 上一次触碰信息
+            - desc: str, 触碰描述
     """
     print(f"\n{'='*60}")
-    print(f"【BOLL触碰检测】检测股票 {stock_code} 最近{lookback_days}天是否触碰BOLL线")
+    print(f"【BOLL触碰检测】检测股票 {stock_code} 最新交易日是否触碰BOLL线")
     print(f"{'='*60}")
 
-    touched, touch_info = check_boll_touch(df, lookback_days=lookback_days)
+    # 获取最新交易日（最后一条数据）
+    latest_data = df.iloc[-1]
+    latest_date = df.index[-1]
 
-    if not touched:
-        print(f"✓ 最近{lookback_days}天未触碰BOLL线")
+    # 检测最新交易日是否触碰
+    current_touch = False
+    current_touch_type = None
+    touch_desc = ""
+
+    high = latest_data['high']
+    low = latest_data['low']
+    upper = latest_data['BOLL_UPPER']
+    lower = latest_data['BOLL_LOWER']
+
+    # 检测是否触碰上轨
+    if high >= upper:
+        current_touch = True
+        current_touch_type = 'UPPER'
+        touch_desc = f"最高价 {high:.2f} 触碰布林线上轨 {upper:.2f}"
+    # 检测是否触碰下轨
+    elif low <= lower:
+        current_touch = True
+        current_touch_type = 'LOWER'
+        touch_desc = f"最低价 {low:.2f} 触碰布林线下轨 {lower:.2f}"
+
+    # 分析触碰模式
+    touch_info = {
+        'date': latest_date.strftime('%Y-%m-%d'),
+        'current_touch': current_touch,
+        'current_touch_type': current_touch_type,
+        'current_consecutive_count': 0,
+        'last_touch_info': {
+            'last_touch_date': None,
+            'last_touch_type': None,
+            'last_consecutive_count': 0
+        }
+    }
+
+    if analyze_touch:
+        try:
+            pattern = analyze_touch_patterns(stock_code, latest_date.strftime('%Y-%m-%d'))
+            touch_info['current_consecutive_count'] = pattern['current_consecutive_count']
+            touch_info['last_touch_info'] = pattern['last_touch_info']
+        except Exception as e:
+            print(f"  ⚠ 触碰模式分析失败: {e}")
+
+    # 输出结果
+    if current_touch:
+        touch_type_text = '上轨' if current_touch_type == 'UPPER' else '下轨'
+        print(f"⚠ 最新交易日 ({latest_date.strftime('%Y-%m-%d')}) 触碰布林线{touch_type_text}！")
+        print(f"  {touch_desc}")
+
+        # 输出连续触碰信息
+        if analyze_touch and touch_info['current_consecutive_count'] > 0:
+            print(f"  🔁 连续触碰分析：")
+            print(f"     • 这是第 {touch_info['current_consecutive_count']} 次连续触碰")
     else:
-        print(f"⚠ 检测到BOLL线触碰！")
-        for info in touch_info:
-            touch_type_text = '上轨' if info['type'] == 'UPPER' else '下轨'
-            print(f"  📅 {info['date']}: {info['desc']}")
-        print(f"  提示：触碰{'上轨' if any(t['type']=='UPPER' for t in touch_info) else ''}{'/' if any(t['type']=='UPPER' for t in touch_info) and any(t['type']=='LOWER' for t in touch_info) else ''}{'下轨' if any(t['type']=='LOWER' for t in touch_info) else ''}可能意味着价格波动较大，请注意风险！")
+        print(f"✓ 最新交易日 ({latest_date.strftime('%Y-%m-%d')}) 未触碰BOLL线")
+
+    # 输出上一次触碰信息
+    if analyze_touch and touch_info['last_touch_info']['last_touch_date']:
+        last = touch_info['last_touch_info']
+        last_type_text = '上轨' if last['last_touch_type'] == 'UPPER' else '下轨'
+        print(f"  📊 上一次触碰信息：")
+        print(f"     • 日期: {last['last_touch_date']}")
+        print(f"     • 类型: {last_type_text}")
+        print(f"     • 连续次数: {last['last_consecutive_count']} 次")
+
+        # 计算距离今天多少天
+        if isinstance(latest_date, pd.Timestamp):
+            latest_date_only = latest_date.date()
+        else:
+            latest_date_only = latest_date
+
+        days_ago = (latest_date_only - last['last_touch_date']).days
+        print(f"     • 距离今天: {days_ago} 天")
 
     print(f"{'='*60}\n")
 
-    return touched, touch_info
+    return touch_info
 
 
 # ==================== 数据库存储模块 ====================
+
+def get_touch_history_from_db(stock_code, limit_days=365):
+    """
+    从数据库获取历史触碰记录
+
+    参数:
+        stock_code: 股票代码
+        limit_days: 查询最近多少天的历史记录，默认365天
+
+    返回:
+        touch_history: DataFrame, 包含历史触碰记录
+    """
+    try:
+        import pymysql
+        import pandas as pd
+
+        conn = pymysql.connect(
+            host=DB_CONFIG['host'],
+            user=DB_CONFIG['user'],
+            password=DB_CONFIG['password'],
+            database=DB_CONFIG['database'],
+            charset=DB_CONFIG['charset']
+        )
+
+        # 查询最近的历史记录
+        query = """
+            SELECT trade_date, boll_touch_type
+            FROM stock_daily_data
+            WHERE stock_code = %s
+            AND boll_touch_type IS NOT NULL
+            AND trade_date >= DATE_SUB(CURDATE(), INTERVAL %s DAY)
+            ORDER BY trade_date ASC
+        """
+        touch_history = pd.read_sql(query, conn, params=(stock_code, limit_days))
+        conn.close()
+
+        return touch_history
+
+    except Exception as e:
+        print(f"⚠ 查询历史触碰记录失败: {e}")
+        return None
+
+
+def analyze_touch_patterns(stock_code, latest_date):
+    """
+    分析触碰模式
+
+    参数:
+        stock_code: 股票代码
+        latest_date: 最新交易日期
+
+    返回:
+        dict: 包含以下信息
+            - current_touch: 最新交易日是否触碰
+            - current_touch_type: 最新触碰类型 (UPPER/LOWER/None)
+            - current_consecutive_count: 如果最新触碰，这是第几次连续触碰
+            - last_touch_info: 上一次触碰信息
+                - last_touch_date: 上一次触碰日期
+                - last_touch_type: 上一次触碰类型
+                - last_consecutive_count: 上一次连续触碰次数
+    """
+    # 获取历史触碰记录
+    touch_history = get_touch_history_from_db(stock_code, limit_days=365)
+
+    # 确保日期格式
+    if isinstance(latest_date, str):
+        latest_date = pd.to_datetime(latest_date).date()
+
+    result = {
+        'current_touch': False,
+        'current_touch_type': None,
+        'current_consecutive_count': 0,
+        'last_touch_info': {
+            'last_touch_date': None,
+            'last_touch_type': None,
+            'last_consecutive_count': 0
+        }
+    }
+
+    if touch_history is None or touch_history.empty:
+        return result
+
+    # 转换日期格式
+    touch_history['trade_date'] = pd.to_datetime(touch_history['trade_date']).dt.date
+    touch_history = touch_history.sort_values('trade_date').reset_index(drop=True)
+
+    # 检查最新交易日是否触碰
+    latest_touch = touch_history[touch_history['trade_date'] == latest_date]
+
+    if not latest_touch.empty:
+        # 最新交易日触碰了
+        result['current_touch'] = True
+        result['current_touch_type'] = latest_touch.iloc[0]['boll_touch_type']
+
+        # 计算连续触碰次数
+        consecutive_count = 1
+        for i in range(len(touch_history) - 1, -1, -1):
+            if touch_history.iloc[i]['trade_date'] == latest_date:
+                # 找到最新交易日，继续向前检查
+                if i > 0:
+                    prev_date = touch_history.iloc[i - 1]['trade_date']
+                    curr_date = touch_history.iloc[i]['trade_date']
+                    # 检查是否连续（相差1天）
+                    if (curr_date - prev_date).days == 1:
+                        consecutive_count += 1
+                    else:
+                        break
+                else:
+                    break
+
+        result['current_consecutive_count'] = consecutive_count
+
+    # 查找上一次触碰信息（排除最新交易日）
+    if not latest_touch.empty:
+        # 如果最新交易日触碰，上一次触碰是连续序列之前的那次
+        history_without_latest = touch_history[touch_history['trade_date'] < latest_date]
+    else:
+        # 如果最新交易日未触碰，上一次触碰就是最近的记录
+        history_without_latest = touch_history.copy()
+
+    if not history_without_latest.empty:
+        last_touch = history_without_latest.iloc[-1]
+        result['last_touch_info']['last_touch_date'] = last_touch['trade_date']
+        result['last_touch_info']['last_touch_type'] = last_touch['boll_touch_type']
+
+        # 计算上一次触碰的连续次数
+        last_touch_idx = history_without_latest.index[-1]
+        last_consecutive = 1
+
+        # 从上一次触碰向前回溯
+        for i in range(last_touch_idx - 1, -1, -1):
+            curr_row = history_without_latest.iloc[i + 1]
+            prev_row = history_without_latest.iloc[i]
+
+            # 检查是否连续
+            if (curr_row['trade_date'] - prev_row['trade_date']).days == 1:
+                last_consecutive += 1
+            else:
+                break
+
+        result['last_touch_info']['last_consecutive_count'] = last_consecutive
+
+    return result
+
 
 def save_to_database(df, stock_code, touch_info):
     """
@@ -222,7 +440,7 @@ def save_to_database(df, stock_code, touch_info):
     参数:
         df: 包含所有指标的DataFrame
         stock_code: 股票代码
-        touch_info: BOLL触碰信息
+        touch_info: BOLL触碰信息 (dict格式)
     """
     print(f"\n{'='*60}")
     print(f"【数据库存储】准备保存数据到MySQL数据库...")
@@ -248,9 +466,8 @@ def save_to_database(df, stock_code, touch_info):
 
             cursor = conn.cursor()
 
-
-            # 创建触碰类型映射
-            touch_type_map = {info['date']: info['type'] for info in touch_info}
+            # 创建触碰类型映射 (只记录最新交易日的触碰)
+            touch_type_map = {touch_info['date']: touch_info['current_touch_type']}
 
             # 准备插入数据
             insert_count = 0
@@ -389,7 +606,7 @@ def plot_kline_with_boll(df, stock_code, days=120):
 
 # ==================== 主程序入口 ====================
 
-def main(stock_code='600036.XSHG', frequency='1d', count=120, save_db=False, plot_chart=True):
+def main(stock_code='600036.XSHG', frequency='1d', count=120, save_db=False, plot_chart=True, analyze_touch=True):
     """
     主程序入口
 
@@ -399,6 +616,7 @@ def main(stock_code='600036.XSHG', frequency='1d', count=120, save_db=False, plo
         count: 获取天数，默认120天
         save_db: 是否保存到数据库，默认False
         plot_chart: 是否绘图，默认True
+        analyze_touch: 是否分析触碰模式，默认True
     """
     print(f"\n{'#'*60}")
     print(f"# 股票数据分析系统 - Staging Main")
@@ -409,9 +627,8 @@ def main(stock_code='600036.XSHG', frequency='1d', count=120, save_db=False, plo
     # 1. 数据获取与计算
     df = get_stock_data(stock_code, frequency=frequency, count=count)
 
-    # 2. BOLL触碰检测与提醒
-    touched, touch_info = print_boll_touch_alert(stock_code, df, lookback_days=count)
-
+    # 2. BOLL触碰检测与提醒（只检测最新交易日，包含触碰模式分析）
+    touch_info = print_boll_touch_alert(stock_code, df, analyze_touch=analyze_touch)
 
     # 3. 数据库存储
     if save_db:
@@ -429,14 +646,16 @@ def main(stock_code='600036.XSHG', frequency='1d', count=120, save_db=False, plo
 
 
 # 批量处理多只股票
-def batch_analysis(stock_list, count=1, save_db=False, plot_chart=True):
+def batch_analysis(stock_list, count=120, save_db=False, plot_chart=True, analyze_touch=True):
     """
     批量分析多只股票
 
     参数:
         stock_list: 股票代码列表，如 ['600036.XSHG', '600519.XSHG']
+        count: 获取多少天的数据，默认120天
         save_db: 是否保存到数据库
         plot_chart: 是否绘图
+        analyze_touch: 是否分析触碰模式，默认True
     """
     print(f"\n{'='*60}")
     print(f"【批量分析】开始分析 {len(stock_list)} 只股票...")
@@ -450,11 +669,12 @@ def batch_analysis(stock_list, count=1, save_db=False, plot_chart=True):
                 stock_code=stock_code,
                 save_db=save_db,
                 count=count,
-                plot_chart=plot_chart
+                plot_chart=plot_chart,
+                analyze_touch=analyze_touch
             )
             all_results[stock_code] = {
                 'success': True,
-                'touch_count': len(touch_info),
+                'current_touch': touch_info['current_touch'],
                 'touch_info': touch_info
             }
         except Exception as e:
@@ -463,18 +683,6 @@ def batch_analysis(stock_list, count=1, save_db=False, plot_chart=True):
                 'success': False,
                 'error': str(e)
             }
-
-    # 输出汇总
-    print(f"\n{'='*60}")
-    print(f"【批量分析汇总】")
-    print(f"{'='*60}")
-    success_count = sum(1 for r in all_results.values() if r['success'])
-    touch_count = sum(r.get('touch_count', 0) for r in all_results.values() if r['success'])
-    print(f"总计分析: {len(stock_list)} 只股票")
-    print(f"成功: {success_count} 只")
-    print(f"失败: {len(stock_list) - success_count} 只")
-    print(f"检测到BOLL触碰: {touch_count} 次")
-    print(f"{'='*60}\n")
 
     return all_results
 
@@ -503,5 +711,4 @@ if __name__ == '__main__':
         # 默认运行示例
         stock_codes = ['600036.XSHG', '600941.XSHG', '513880.XSHG', '518880.XSHG', '000333.XSHE', '000858.XSHE']  # 可修改为需要分析的股票列表
 
-        all_results = batch_analysis(stock_codes, count=720, save_db=True, plot_chart=False)
-        print("批量分析结果:", all_results)
+        all_results = batch_analysis(stock_codes, count=30, save_db=True, plot_chart=False, analyze_touch=True)
