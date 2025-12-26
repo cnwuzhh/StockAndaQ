@@ -11,6 +11,7 @@ print('上证指数日线行情\n',df.tail(5))
 #-------有数据了，下面开始正题 -------------
 CLOSE=df.close.values;         OPEN=df.open.values           #基础数据定义，只要传入的是序列都可以  Close=df.close.values 
 HIGH=df.high.values;           LOW=df.low.values             #例如  CLOSE=list(df.close) 都是一样
+VOLUME=df.volume.values;       
 
 MA5=MA(CLOSE,5)                                #获取5日均线序列
 MA10=MA(CLOSE,10)                              #获取10日均线序列
@@ -20,6 +21,8 @@ up,mid,lower=BOLL(CLOSE)                       #获取布林带指标数据
 df['BOLL_UPPER']=up
 df['BOLL_MIDDLE']=mid
 df['BOLL_LOWER']=lower
+
+
 
 
 #-------------------------检测BOLL线触碰函数-----------------------------------------------------------------
@@ -96,7 +99,7 @@ def plot_kline_with_boll(df, stock_code, days=120):
         import pandas as pd
 
         # 准备数据，确保索引为 DatetimeIndex
-        data = df[['open','high','low','close','BOLL_UPPER','BOLL_MIDDLE','BOLL_LOWER']].copy()
+        data = df[['open','high','low','close','volume','BOLL_UPPER','BOLL_MIDDLE','BOLL_LOWER']].copy()
         if not isinstance(data.index, pd.DatetimeIndex):
             data.index = pd.to_datetime(data.index)
 
@@ -112,12 +115,12 @@ def plot_kline_with_boll(df, stock_code, days=120):
 
         # 优先尝试交互式显示；若失败则保存为文件以适配无显示环境
         try:
-            mpf.plot(data.tail(days), type='candle', mav=(5,10), volume=False,
+            mpf.plot(data.tail(days), type='candle', mav=(5,10), volume=True,
                      addplot=add_plots, style='yahoo',
                      title=title, figsize=(15,8))
         except Exception:
             out_file = f'{stock_code}_kline.png'
-            mpf.plot(data.tail(days), type='candle', mav=(5,10), volume=False,
+            mpf.plot(data.tail(days), type='candle', mav=(5,10), volume=True, 
                      addplot=add_plots, style='yahoo',
                      title=title, figsize=(15,8), savefig=out_file)
             print(f"绘图交互显示失败或在无 GUI 环境，已将 K 线图保存为 {out_file}")
