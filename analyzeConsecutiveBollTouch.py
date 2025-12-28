@@ -25,6 +25,67 @@ DB_CONFIG = {
     'charset': 'utf8mb4'
 }
 
+
+def get_stock_name(stock_code):
+    """
+    从数据库获取股票名称
+
+    参数:
+        stock_code: 股票代码
+
+    返回:
+        str: 股票名称，如果查询失败返回None
+    """
+    try:
+        import pymysql
+
+        conn = pymysql.connect(
+            host=DB_CONFIG['host'],
+            user=DB_CONFIG['user'],
+            password=DB_CONFIG['password'],
+            database=DB_CONFIG['database'],
+            charset=DB_CONFIG['charset']
+        )
+
+        query = "SELECT stock_name FROM stock_info WHERE stock_code = %s AND is_active = 1"
+        cursor = conn.cursor()
+        cursor.execute(query, (stock_code,))
+        result = cursor.fetchone()
+
+        cursor.close()
+        conn.close()
+
+        if result:
+            return result[0]
+        else:
+            return None
+
+    except Exception as e:
+        print(f"  ⚠ 查询股票名称失败: {e}")
+        return None
+
+
+def format_stock_display(stock_code, stock_name=None):
+    """
+    格式化股票显示为"名称 + 代码"
+
+    参数:
+        stock_code: 股票代码
+        stock_name: 股票名称（可选）
+
+    返回:
+        str: 格式化后的显示文本
+    """
+    if not stock_name:
+        # 尝试从数据库获取
+        stock_name = get_stock_name(stock_code)
+
+    if stock_name:
+        return f"{stock_name} ({stock_code})"
+    else:
+        # 如果没有找到名称，只显示代码
+        return stock_code
+
 # 邮件配置
 EMAIL_CONFIG = {
     'smtp_server': 'smtp.gmail.com',  # SMTP服务器地址
@@ -215,7 +276,7 @@ def format_consecutive_info_html(sequence):
 
 def send_email_report(stock_code, result, recipients):
     """
-    发送分析报告邮件
+    发送分析报告邮件（不包含K线图，邮件不支持嵌入图片）
 
     参数:
         stock_code: 股票代码
@@ -236,8 +297,8 @@ def send_email_report(stock_code, result, recipients):
         msg['From'] = Header(f"{EMAIL_CONFIG['sender_name']} <{EMAIL_CONFIG['sender_email']}>", 'utf-8')
         msg['To'] = ', '.join(recipients)
 
-        # 生成HTML内容
-        html_content = generate_html_report(stock_code, result)
+        # 生成HTML内容（不包含K线图）
+        html_content = generate_html_report(stock_code, result, chart_filename=None)
 
         # 创建HTML邮件
         html_part = MIMEText(html_content, 'html', 'utf-8')
@@ -265,13 +326,15 @@ def send_email_report(stock_code, result, recipients):
         return False
 
 
-def generate_html_report(stock_code, result):
+def generate_html_report(stock_code, result, chart_filename=None, latest_touch=None):
     """
     生成HTML格式的分析报告
 
     参数:
         stock_code: 股票代码
         result: 分析结果
+        chart_filename: K线图文件名（可选）
+        latest_touch: 最新触碰状态信息（可选）
 
     返回:
         str: HTML内容
@@ -288,6 +351,9 @@ def generate_html_report(stock_code, result):
 
     sequences = result['sequences']
 
+    # 获取股票名称
+    stock_display = format_stock_display(stock_code)
+
     # 构建HTML内容
     html = f"""
     <html>
@@ -298,7 +364,7 @@ def generate_html_report(stock_code, result):
                 font-family: "Microsoft YaHei", Arial, sans-serif;
                 line-height: 1.6;
                 color: #333;
-                max-width: 800px;
+                max-width: 1000px;
                 margin: 0 auto;
                 padding: 20px;
             }}
@@ -317,6 +383,39 @@ def generate_html_report(stock_code, result):
                 border-radius: 5px;
                 margin: 20px 0;
             }}
+            .latest-touch {{
+                background-color: #fff3cd;
+                padding: 15px;
+                border-radius: 5px;
+                margin: 20px 0;
+                border-left: 4px solid #ffc107;
+            }}
+            .latest-touch.touched {{
+                background-color: #d4edda;
+                border-left-color: #28a745;
+            }}
+            .latest-touch.touched-upper {{
+                background-color: #f8d7da;
+                border-left-color: #dc3545;
+            }}
+            .latest-touch.touched-lower {{
+                background-color: #d1ecf1;
+                border-left-color: #17a2b8;
+            }}
+            .chart-container {{
+                margin: 30px 0;
+                text-align: center;
+                background-color: #f8f9fa;
+                padding: 20px;
+                border-radius: 5px;
+                border: 1px solid #dee2e6;
+            }}
+            .chart-container img {{
+                max-width: 100%;
+                height: auto;
+                border: 1px solid #ccc;
+                box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            }}
             .footer {{
                 margin-top: 30px;
                 padding-top: 20px;
@@ -328,7 +427,7 @@ def generate_html_report(stock_code, result):
     </head>
     <body>
         <h1>📊 股票分析报告</h1>
-        <h2>{stock_code} - 连续触碰BOLL线分析</h2>
+        <h2>{stock_display} - 连续触碰BOLL线分析</h2>
 
         <div class="summary">
             <h3>📈 分析摘要</h3>
@@ -336,7 +435,59 @@ def generate_html_report(stock_code, result):
             <p><strong>总计连续触碰段数:</strong> {result.get('total_sequences', 0)}</p>
         </div>
 
-        <h3>最近 {len(sequences)} 段连续触碰详情</h3>
+        <h3>🎯 最新交易日触碰状态</h3>
+    """
+
+    # 添加最新触碰状态
+    if latest_touch:
+        touch_date = latest_touch.get('touch_date', '未知')
+        if latest_touch['touched']:
+            touch_type_cn = '上轨' if latest_touch['touch_type'] == 'UPPER' else '下轨'
+            touch_class = 'touched-upper' if latest_touch['touch_type'] == 'UPPER' else 'touched-lower'
+            html += f"""
+        <div class="latest-touch {touch_class}">
+            <h4>⚠ 触碰BOLL线！</h4>
+            <p><strong>日期:</strong> {touch_date}</p>
+            <p><strong>触碰类型:</strong> {touch_type_cn}</p>
+            <p><strong>详情:</strong> {latest_touch.get('description', '无')}</p>
+        </div>
+        """
+        else:
+            html += f"""
+        <div class="latest-touch">
+            <h4>✓ 未触碰BOLL线</h4>
+            <p><strong>日期:</strong> {touch_date}</p>
+            <p><strong>状态:</strong> {latest_touch.get('description', '无')}</p>
+        </div>
+        """
+    else:
+        html += """
+        <div class="latest-touch">
+            <p style="color: #7f8c8d;">无法获取最新触碰状态</p>
+        </div>
+        """
+
+    html += f"""
+        <h3>📊 K线图与布林线</h3>
+    """
+
+    # 添加K线图（如果存在）
+    if chart_filename:
+        html += f"""
+        <div class="chart-container">
+            <p><strong>图表说明：</strong>K线图包含价格走势、成交量及布林带上中下轨（红、黄、绿线）</p>
+            <img src="{chart_filename}" alt="{stock_code} K线图与布林线">
+        </div>
+        """
+    else:
+        html += """
+        <div class="chart-container">
+            <p style="color: #7f8c8d;">K线图生成失败或不可用</p>
+        </div>
+        """
+
+    html += f"""
+        <h3>📋 最近 {len(sequences)} 段连续触碰详情</h3>
     """
 
     # 添加每段连续触碰的详情
@@ -410,9 +561,156 @@ def send_batch_email_report(results, recipients):
         return False
 
 
+def get_latest_touch_status(stock_code):
+    """
+    获取最新交易日的触碰状态
+
+    参数:
+        stock_code: 股票代码
+
+    返回:
+        dict: 包含触碰状态信息
+            - touched: bool, 是否触碰
+            - touch_type: str, 触碰类型 (UPPER/LOWER)
+            - touch_date: str, 触碰日期
+            - price: float, 触碰价格
+            - boll_value: float, BOLL值
+    """
+    try:
+        from Ashare import get_price
+        from MyTT import BOLL
+
+        # 获取最近2天的数据（确保有最新交易日）
+        df = get_price(stock_code, frequency='1d', count=2)
+
+        if df.empty:
+            return None
+
+        # 计算BOLL指标
+        CLOSE = df.close.values
+        up, mid, lower = BOLL(CLOSE)
+        df['BOLL_UPPER'] = up
+        df['BOLL_MIDDLE'] = mid
+        df['BOLL_LOWER'] = lower
+
+        # 获取最新交易日（最后一条数据）
+        latest = df.iloc[-1]
+        latest_date = df.index[-1]
+
+        high = latest['high']
+        low = latest['low']
+        upper = latest['BOLL_UPPER']
+        lower_boll = latest['BOLL_LOWER']
+
+        # 检测触碰
+        if high >= upper:
+            return {
+                'touched': True,
+                'touch_type': 'UPPER',
+                'touch_date': latest_date.strftime('%Y-%m-%d'),
+                'price': high,
+                'boll_value': upper,
+                'description': f'最高价 {high:.2f} 触碰上轨 {upper:.2f}'
+            }
+        elif low <= lower_boll:
+            return {
+                'touched': True,
+                'touch_type': 'LOWER',
+                'touch_date': latest_date.strftime('%Y-%m-%d'),
+                'price': low,
+                'boll_value': lower_boll,
+                'description': f'最低价 {low:.2f} 触碰下轨 {lower_boll:.2f}'
+            }
+        else:
+            return {
+                'touched': False,
+                'touch_type': None,
+                'touch_date': latest_date.strftime('%Y-%m-%d'),
+                'price': latest['close'],
+                'boll_value': None,
+                'description': f'未触碰BOLL线（收盘价 {latest["close"]:.2f}）'
+            }
+    except Exception as e:
+        print(f"  ✗ 获取触碰状态失败: {e}")
+        return None
+
+
+def generate_kline_chart(stock_code, output_dir='.', days=120):
+    """
+    生成K线图并保存为图片文件
+
+    参数:
+        stock_code: 股票代码
+        output_dir: 输出目录
+        days: 显示最近多少天的数据
+
+    返回:
+        str: 图片文件的相对路径（相对于output_dir），失败返回None
+    """
+    try:
+        from Ashare import get_price
+        from MyTT import BOLL
+        import mplfinance as mpf
+        import matplotlib.pyplot as plt
+        import pandas as pd
+        import os
+
+        # 创建images子目录
+        images_dir = os.path.join(output_dir, 'images')
+        if not os.path.exists(images_dir):
+            os.makedirs(images_dir)
+
+        # 获取股票数据
+        print(f"  正在获取 {stock_code} 的K线数据...")
+        df = get_price(stock_code, frequency='1d', count=days)
+
+        # 计算BOLL指标
+        CLOSE = df.close.values
+        up, mid, lower = BOLL(CLOSE)
+        df['BOLL_UPPER'] = up
+        df['BOLL_MIDDLE'] = mid
+        df['BOLL_LOWER'] = lower
+
+        # 配置中文字体
+        plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'SimSun', 'KaiTi']
+        plt.rcParams['axes.unicode_minus'] = False
+
+        # 准备数据
+        data = df[['open', 'high', 'low', 'close', 'volume', 'BOLL_UPPER', 'BOLL_MIDDLE', 'BOLL_LOWER']].copy()
+        if not isinstance(data.index, pd.DatetimeIndex):
+            data.index = pd.to_datetime(data.index)
+
+        # 生成图片文件名
+        date_str = datetime.now().strftime('%Y-%m-%d')
+        chart_filename = f"{date_str}_{stock_code}_kline.png"
+        chart_filepath = os.path.join(images_dir, chart_filename)
+
+        # 添加布林线面板
+        add_plots = [
+            mpf.make_addplot(data['BOLL_UPPER'].tail(days), color='red', width=1.2),
+            mpf.make_addplot(data['BOLL_MIDDLE'].tail(days), color='yellow', width=1.0),
+            mpf.make_addplot(data['BOLL_LOWER'].tail(days), color='green', width=1.2)
+        ]
+
+        # 绘制并保存K线图
+        title = f'{stock_code} K线图+布林线（最近{days}日）'
+        mpf.plot(data.tail(days), type='candle', mav=(5, 10), volume=True,
+                addplot=add_plots, style='yahoo',
+                title=title, figsize=(15, 8), savefig=chart_filepath)
+
+        # 返回相对路径（相对于output_dir）
+        relative_path = f"images/{chart_filename}"
+        print(f"  ✓ K线图已生成: {relative_path}")
+        return relative_path
+
+    except Exception as e:
+        print(f"  ✗ 生成K线图失败: {e}")
+        return None
+
+
 def save_html_report(stock_code, result, output_dir='.'):
     """
-    保存HTML报告到文件
+    保存HTML报告到文件（包含K线图和最新触碰状态）
 
     参数:
         stock_code: 股票代码
@@ -429,13 +727,20 @@ def save_html_report(stock_code, result, output_dir='.'):
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
 
+        # 获取最新触碰状态
+        print(f"  正在获取 {stock_code} 的最新触碰状态...")
+        latest_touch = get_latest_touch_status(stock_code)
+
+        # 生成K线图
+        chart_filename = generate_kline_chart(stock_code, output_dir)
+
         # 生成文件名：日期_股票代码_analysis.html
         date_str = datetime.now().strftime('%Y-%m-%d')
         filename = f"{date_str}_{stock_code}_analysis.html"
         filepath = os.path.join(output_dir, filename)
 
-        # 生成HTML内容
-        html_content = generate_html_report(stock_code, result)
+        # 生成HTML内容（包含K线图和最新触碰状态）
+        html_content = generate_html_report(stock_code, result, chart_filename, latest_touch)
 
         # 写入文件
         with open(filepath, 'w', encoding='utf-8') as f:
@@ -451,7 +756,7 @@ def save_html_report(stock_code, result, output_dir='.'):
 
 def save_batch_html_report(results, output_dir='.'):
     """
-    保存批量分析的HTML报告到文件
+    保存批量分析的HTML报告到文件（包含K线图和最新触碰状态）
 
     参数:
         results: 所有股票的分析结果
@@ -467,19 +772,30 @@ def save_batch_html_report(results, output_dir='.'):
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
 
+        # 为每只股票生成K线图并获取最新触碰状态
+        chart_files = {}
+        latest_touches = {}
+        for stock_code, result in results.items():
+            if result and 'sequences' in result:
+                print(f"\n生成 {stock_code} 的K线图和触碰状态...")
+                # 获取最新触碰状态
+                latest_touches[stock_code] = get_latest_touch_status(stock_code)
+                # 生成K线图
+                chart_files[stock_code] = generate_kline_chart(stock_code, output_dir)
+
         # 生成文件名：日期_batch_analysis.html
         date_str = datetime.now().strftime('%Y-%m-%d')
         filename = f"{date_str}_batch_analysis.html"
         filepath = os.path.join(output_dir, filename)
 
-        # 生成HTML内容
-        html_content = generate_batch_html_report(results)
+        # 生成HTML内容（包含K线图和最新触碰状态）
+        html_content = generate_batch_html_report(results, chart_files, latest_touches)
 
         # 写入文件
         with open(filepath, 'w', encoding='utf-8') as f:
             f.write(html_content)
 
-        print(f"✓ 批量HTML报告已保存: {filepath}")
+        print(f"\n✓ 批量HTML报告已保存: {filepath}")
         return filepath
 
     except Exception as e:
@@ -487,16 +803,23 @@ def save_batch_html_report(results, output_dir='.'):
         return None
 
 
-def generate_batch_html_report(results):
+def generate_batch_html_report(results, chart_files=None, latest_touches=None):
     """
     生成批量分析的HTML报告
 
     参数:
         results: 所有股票的分析结果
+        chart_files: K线图文件字典 {stock_code: filename}（可选）
+        latest_touches: 最新触碰状态字典 {stock_code: touch_info}（可选）
 
     返回:
         str: HTML内容
     """
+    if chart_files is None:
+        chart_files = {}
+    if latest_touches is None:
+        latest_touches = {}
+
     html = f"""
     <html>
     <head>
@@ -506,7 +829,7 @@ def generate_batch_html_report(results):
                 font-family: "Microsoft YaHei", Arial, sans-serif;
                 line-height: 1.6;
                 color: #333;
-                max-width: 1000px;
+                max-width: 1200px;
                 margin: 0 auto;
                 padding: 20px;
             }}
@@ -527,6 +850,36 @@ def generate_batch_html_report(results):
                 font-size: 18px;
                 font-weight: bold;
                 margin: 0 0 15px 0;
+            }}
+            .latest-touch-box {{
+                background-color: #fff3cd;
+                padding: 12px;
+                border-radius: 5px;
+                margin: 15px 0;
+                border-left: 4px solid #ffc107;
+                font-size: 14px;
+            }}
+            .latest-touch-box.touched-upper {{
+                background-color: #f8d7da;
+                border-left-color: #dc3545;
+            }}
+            .latest-touch-box.touched-lower {{
+                background-color: #d1ecf1;
+                border-left-color: #17a2b8;
+            }}
+            .chart-container {{
+                margin: 20px 0;
+                text-align: center;
+                background-color: #ffffff;
+                padding: 15px;
+                border-radius: 5px;
+                border: 1px solid #dee2e6;
+            }}
+            .chart-container img {{
+                max-width: 100%;
+                height: auto;
+                border: 1px solid #ccc;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
             }}
             table {{
                 width: 100%;
@@ -561,13 +914,65 @@ def generate_batch_html_report(results):
     for stock_code, result in results.items():
         if result and 'sequences' in result:
             sequences = result['sequences']
+            chart_file = chart_files.get(stock_code)
+            latest_touch = latest_touches.get(stock_code)
+
+            # 获取股票显示名称
+            stock_display = format_stock_display(stock_code)
 
             html += f"""
             <div class="stock-section">
-                <div class="stock-title">{stock_code}</div>
+                <div class="stock-title">{stock_display}</div>
                 <p><strong>总计连续触碰段数:</strong> {result.get('total_sequences', 0)}</p>
 
-                <h4>最近 {len(sequences)} 段连续触碰:</h4>
+                <h4>🎯 最新交易日触碰状态</h4>
+            """
+
+            # 添加最新触碰状态
+            if latest_touch:
+                if latest_touch['touched']:
+                    touch_type_cn = '上轨' if latest_touch['touch_type'] == 'UPPER' else '下轨'
+                    touch_class = 'touched-upper' if latest_touch['touch_type'] == 'UPPER' else 'touched-lower'
+                    html += f"""
+                <div class="latest-touch-box {touch_class}">
+                    <strong>⚠ 触碰BOLL线！</strong> ({latest_touch.get('touch_date', '未知')})<br>
+                    类型: {touch_type_cn} | {latest_touch.get('description', '无')}
+                </div>
+                """
+                else:
+                    html += f"""
+                <div class="latest-touch-box">
+                    <strong>✓ 未触碰BOLL线</strong> ({latest_touch.get('touch_date', '未知')})<br>
+                    {latest_touch.get('description', '无')}
+                </div>
+                """
+            else:
+                html += """
+                <div class="latest-touch-box">
+                    无法获取最新触碰状态
+                </div>
+                """
+
+            html += f"""
+                <h4>📊 K线图与布林线</h4>
+            """
+
+            # 添加K线图（如果存在）
+            if chart_file:
+                html += f"""
+                <div class="chart-container">
+                    <img src="{chart_file}" alt="{stock_display} K线图与布林线">
+                </div>
+                """
+            else:
+                html += """
+                <div class="chart-container">
+                    <p style="color: #7f8c8d;">K线图生成失败或不可用</p>
+                </div>
+                """
+
+            html += f"""
+                <h4>📋 最近 {len(sequences)} 段连续触碰:</h4>
                 <table>
                     <tr>
                         <th>序号</th>
@@ -822,7 +1227,7 @@ if __name__ == '__main__':
         print("\n使用默认配置运行示例...\n")
 
         # 示例股票列表
-        stock_codes = ['600036.XSHG', '600941.XSHG', '513880.XSHG', '000333.XSHE', '000858.XSHE']
+        stock_codes = ['600036.XSHG', '600941.XSHG', '513880.XSHG', '518880.XSHG','000333.XSHE', '000858.XSHE']
 
         # 批量分析（不发送邮件，保存HTML）
         results = batch_analyze_stocks(stock_codes, limit_days=365, top_n=3,
