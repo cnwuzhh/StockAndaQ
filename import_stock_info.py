@@ -207,8 +207,9 @@ SAMPLE_STOCKS = [
     {'stock_code': '600276.XSHG', 'stock_name': '恒瑞医药', 'market': 'XSHG', 'code_prefix': '600276', 'industry': '医药', 'sector': '医疗'},
 
     # ETF基金
+    {'stock_code': '512400.XSHG', 'stock_name': '有色ETF', 'market': 'XSHG', 'code_prefix': '512400', 'industry': 'ETF', 'sector': '基金'},
     {'stock_code': '513880.XSHG', 'stock_name': '证券ETF', 'market': 'XSHG', 'code_prefix': '513880', 'industry': 'ETF', 'sector': '基金'},
-    {'stock_code': '518880.XSHG', 'stock_name': '医疗ETF', 'market': 'XSHG', 'code_prefix': '518880', 'industry': 'ETF', 'sector': '基金'},
+    {'stock_code': '518880.XSHG', 'stock_name': '黄金ETF', 'market': 'XSHG', 'code_prefix': '518880', 'industry': 'ETF', 'sector': '基金'},
     {'stock_code': '512880.XSHG', 'stock_name': '证券保险ETF', 'market': 'XSHG', 'code_prefix': '512880', 'industry': 'ETF', 'sector': '基金'},
     {'stock_code': '510300.XSHG', 'stock_name': '沪深300ETF', 'market': 'XSHG', 'code_prefix': '510300', 'industry': 'ETF', 'sector': '基金'},
     {'stock_code': '510500.XSHG', 'stock_name': '中证500ETF', 'market': 'XSHG', 'code_prefix': '510500', 'industry': 'ETF', 'sector': '基金'},

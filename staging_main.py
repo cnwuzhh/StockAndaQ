@@ -709,6 +709,6 @@ if __name__ == '__main__':
             )
     else:
         # 默认运行示例
-        stock_codes = ['600036.XSHG', '600941.XSHG', '513880.XSHG', '518880.XSHG', '000333.XSHE', '000858.XSHE']  # 可修改为需要分析的股票列表
+        stock_codes = ['600036.XSHG', '600941.XSHG','512400.XSHG',  '513880.XSHG', '518880.XSHG', '000333.XSHE', '000858.XSHE']  # 可修改为需要分析的股票列表
 
         all_results = batch_analysis(stock_codes, count=30, save_db=True, plot_chart=False, analyze_touch=True)

@@ -1188,7 +1188,7 @@ if __name__ == '__main__':
     save_html = '--html' in sys.argv
 
     # 获取输出目录（可选）
-    output_dir = '.'
+    output_dir = './StockAnalysisReports'
     for i, arg in enumerate(sys.argv):
         if arg == '--output' and i + 1 < len(sys.argv):
             output_dir = sys.argv[i + 1]
@@ -1227,7 +1227,7 @@ if __name__ == '__main__':
         print("\n使用默认配置运行示例...\n")
 
         # 示例股票列表
-        stock_codes = ['600036.XSHG', '600941.XSHG', '513880.XSHG', '518880.XSHG','000333.XSHE', '000858.XSHE']
+        stock_codes = ['600036.XSHG', '600941.XSHG', '512400.XSHG','513880.XSHG', '518880.XSHG','000333.XSHE', '000858.XSHE']
 
         # 批量分析（不发送邮件，保存HTML）
         results = batch_analyze_stocks(stock_codes, limit_days=365, top_n=3,
